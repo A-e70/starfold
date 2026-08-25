@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>starfold - find a planet in real telescope data</title>
+<style>
+  :root {
+    --bg: #070c17;
+    --panel: #0d1424;
+    --panel-2: #111a2e;
+    --line: #1d2a44;
+    --text: #e2e9f5;
+    --muted: #8ba0c0;
+    --accent: #56c8ff;
+    --warm: #ffbf6b;
+    --good: #7ee0a8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 {
+    font-size: 34px; font-weight: 650; letter-spacing: -0.02em;
+    margin: 0 0 6px;
+  }
+  h1 span { color: var(--accent); }
+  .tagline { color: var(--muted); margin: 0 0 34px; font-size: 17px; }
+  h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 14px;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  input[type=number], input[type=text] {
+    background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 8px; padding: 9px 11px;
+    font: inherit; width: 120px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--accent); color: #04101d; border: 0;
+    border-radius: 8px; padding: 11px 20px;
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.45; cursor: default; filter: none; }
+  button.ghost {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--line); font-weight: 500;
+  }
+  .bar {
+    height: 4px; background: var(--panel-2); border-radius: 2px;
+    overflow: hidden; margin-top: 16px;
+  }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); }
+  canvas { width: 100%; display: block; border-radius: 8px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  dl { margin: 0; }
+  dl div {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+  }
+  dl div:last-child { border-bottom: 0; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd {
+    margin: 0; font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px;
+  }
+  dd.big { color: var(--accent); font-size: 17px; font-weight: 600; }
+  .note { color: var(--muted); font-size: 13px; line-height: 1.65; }
+  .note strong { color: var(--warm); font-weight: 600; }
+  .drop {
+    border: 1px dashed var(--line); border-radius: 10px;
+    padding: 14px; text-align: center; color: var(--muted); font-size: 13px;
+  }
+  .drop.over { border-color: var(--accent); color: var(--accent); }
+  .status { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>star<span>fold</span></h1>
+  <p class="tagline">
+    Find a planet in real telescope data, in your browser, with no server and no
+    library. Fold the light and the planet appears.
+  </p>
+
+  <div class="panel">
+    <h2>Data</h2>
+    <div class="row">
+      <div class="field"><label>real TESS data</label>
+        <div style="display:flex;gap:8px">
+          <button class="ghost demo" data-file="data/wasp-18.csv"
+                  data-name="WASP-18, TESS 2 minute cadence"
+                  data-rstar="1.26">WASP-18</button>
+          <button class="ghost demo" data-file="data/hd-209458.csv"
+                  data-name="HD 209458, TESS 2 minute cadence"
+                  data-rstar="1.155">HD 209458</button>
+        </div>
+      </div>
+      <label class="ghost" style="cursor:pointer">
+        <input type="file" id="file" accept=".csv,.txt" hidden>
+        <span class="drop" id="drop">or drop your own CSV here, two columns: time in days, flux</span>
+      </label>
+    </div>
+    <div class="status" id="dataStatus">Nothing loaded yet.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Search</h2>
+    <div class="row">
+      <div class="field"><label>shortest period, days</label>
+        <input type="number" id="pmin" value="0.4" step="0.1" min="0.05"></div>
+      <div class="field"><label>longest period, days</label>
+        <input type="number" id="pmax" value="13" step="0.5" min="0.2"></div>
+      <div class="field"><label>trial periods</label>
+        <input type="number" id="nfreq" value="4000" step="500" min="200"></div>
+      <div class="field"><label>time bin, minutes</label>
+        <input type="number" id="binm" value="10" step="5" min="0"></div>
+      <div class="field"><label>star radius, Suns</label>
+        <input type="number" id="rstar" value="1.26" step="0.01" min="0.01"></div>
+      <button id="run" disabled>Search</button>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="status" id="runStatus"></div>
+  </div>
+
+  <div class="panel">
+    <h2>The light, as it arrived</h2>
+    <canvas id="raw" height="220"></canvas>
+    <p class="meta" id="rawMeta" style="margin:12px 0 0"></p>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h2>Every period tried</h2>
+        <canvas id="pgram" height="200"></canvas>
+        <p class="meta" style="margin:12px 0 0">
+          One point per trial period. A real planet is a spike that stands well
+          clear of everything around it.
+        </p>
+      </div>
+      <div class="panel">
+        <h2>Folded on the best period</h2>
+        <canvas id="fold" height="260"></canvas>
+        <p class="meta" style="margin:12px 0 0">
+          Every measurement stacked onto one orbit. Grey is each measurement,
+          blue is the average in each phase bin, amber is the box that was fitted.
+        </p>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>What it found</h2>
+        <dl id="results">
+          <div><dt>period</dt><dd class="big" id="rPeriod">-</dd></div>
+          <div><dt>depth</dt><dd id="rDepth">-</dd></div>
+          <div><dt>duration</dt><dd id="rDur">-</dd></div>
+          <div><dt>detection strength</dt><dd id="rSde">-</dd></div>
+          <div><dt>Rplanet / Rstar</dt><dd id="rK">-</dd></div>
+          <div><dt>planet radius</dt><dd id="rRp">-</dd></div>
+          <div><dt>transits in the data</dt><dd id="rN">-</dd></div>
+        </dl>
+      </div>
+      <div class="panel">
+        <h2>Read this before believing it</h2>
+        <p class="note">
+          <strong>Half and double.</strong> A box search will often land on twice
+          the true period, or half of it. Fold at the answer and look: if the two
+          halves of the plot both show a dip, halve the period.
+        </p>
+        <p class="note">
+          <strong>Detection strength</strong> is how many standard deviations the
+          peak stands above the rest of the periodogram. Below about 7 the
+          detection is not trustworthy on its own.
+        </p>
+        <p class="note">
+          <strong>Duration comes out short.</strong> A box has vertical sides and
+          a real transit does not, so the fitted width lands inside the true
+          first to fourth contact time by roughly the ingress duration.
+        </p>
+        <p class="note">
+          <strong>Radius assumes the crossing is central.</strong> Depth gives
+          Rp/Rs only for a planet crossing the middle of the disc, and only with
+          no limb darkening. Off centre or a bright limb both make the real
+          planet larger than this says.
+        </p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DATA = null;          // {name, t: Float64Array, y: Float64Array}
+  var RESULT = null;
+  var worker = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- plotting ----------------------------------------------------
+
+  function setup(cv) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth, h = parseInt(cv.getAttribute("height"), 10);
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    cv.style.height = h + "px";
+    var c = cv.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    return { c: c, w: w, h: h };
+  }
+
+  var PAD = { l: 78, r: 14, t: 12, b: 46 };
+
+  function axes(g, xlo, xhi, ylo, yhi, xlab, ylab, yfmt) {
+    var c = g.c, w = g.w, h = g.h;
+    var x0 = PAD.l, x1 = w - PAD.r, y0 = h - PAD.b, y1 = PAD.t;
+    c.strokeStyle = "#1d2a44"; c.lineWidth = 1;
+    c.fillStyle = "#8ba0c0";
+    c.font = "11px ui-monospace, Menlo, Consolas, monospace";
+    var i, ty, tx, py, px;
+    for (i = 0; i <= 4; i++) {
+      ty = ylo + (yhi - ylo) * i / 4;
+      py = y0 + (y1 - y0) * i / 4;
+      c.beginPath(); c.moveTo(x0, py); c.lineTo(x1, py); c.stroke();
+      c.textAlign = "right"; c.textBaseline = "middle";
+      c.fillText(yfmt(ty), x0 - 8, py);
+    }
+    for (i = 0; i <= 5; i++) {
+      tx = xlo + (xhi - xlo) * i / 5;
+      px = x0 + (x1 - x0) * i / 5;
+      c.textAlign = "center"; c.textBaseline = "top";
+      c.fillText(fmt(tx, 2), px, y0 + 7);
+    }
+    c.fillStyle = "#6f83a3";
+    c.textAlign = "center"; c.textBaseline = "alphabetic";
+    c.fillText(xlab, (x0 + x1) / 2, h - 8);
+    c.save();
+    c.translate(13, (y0 + y1) / 2);
+    c.rotate(-Math.PI / 2);
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(ylab, 0, 0);
+    c.restore();
+    return {
+      X: function (v) { return x0 + (x1 - x0) * (v - xlo) / (xhi - xlo); },
+      Y: function (v) { return y0 + (y1 - y0) * (v - ylo) / (yhi - ylo); },
+      x0: x0, x1: x1, y0: y0, y1: y1
+    };
+  }
+
+  function fmt(v, n) {
+    if (!isFinite(v)) { return "-"; }
+    return v.toFixed(n);
+  }
+
+  function range(a) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] < lo) { lo = a[i]; }
+      if (a[i] > hi) { hi = a[i]; }
+    }
+    return [lo, hi];
+  }
+
+  // Robust limits, so one cosmic ray does not flatten the whole plot.
+  function pct(a, p) {
+    var s = Array.prototype.slice.call(a);
+    s.sort(function (x, y) { return x - y; });
+    return s[Math.min(s.length - 1, Math.max(0, Math.floor(p * s.length)))];
+  }
+
+  function drawRaw() {
+    var g = setup($("raw"));
+    if (!DATA) { return; }
+    var tr = range(DATA.t);
+    var lo = pct(DATA.y, 0.001), hi = pct(DATA.y, 0.999);
+    var m = (hi - lo) * 0.12;
+    var A = axes(g, tr[0], tr[1], lo - m, hi + m, "days", "flux",
+                 function (v) { return v.toFixed(4); });
+    g.c.fillStyle = "rgba(200,216,240,0.5)";
+    for (var i = 0; i < DATA.t.length; i++) {
+      g.c.fillRect(A.X(DATA.t[i]) - 0.5, A.Y(DATA.y[i]) - 0.5, 1, 1);
+    }
+  }
+
+  function drawPgram(r) {
+    var g = setup($("pgram"));
+    if (!r) { return; }
+    var pr = range(r.periods), qr = range(r.power);
+    var A = axes(g, pr[0], pr[1], 0, qr[1] * 1.08, "period, days", "power",
+                 function (v) { return v.toFixed(3); });
+    g.c.strokeStyle = "#56c8ff"; g.c.lineWidth = 1; g.c.beginPath();
+    for (var i = 0; i < r.periods.length; i++) {
+      var x = A.X(r.periods[i]), y = A.Y(r.power[i]);
+      if (i === 0) { g.c.moveTo(x, y); } else { g.c.lineTo(x, y); }
+    }
+    g.c.stroke();
+    var px = A.X(r.period);
+    g.c.strokeStyle = "rgba(255,191,107,0.9)";
+    g.c.setLineDash([4, 4]); g.c.beginPath();
+    g.c.moveTo(px, A.y0); g.c.lineTo(px, A.y1); g.c.stroke();
+    g.c.setLineDash([]);
+    g.c.fillStyle = "#ffbf6b"; g.c.font = "12px ui-monospace, Menlo, monospace";
+    g.c.textAlign = px > (A.x0 + A.x1) / 2 ? "right" : "left";
+    g.c.textBaseline = "top";
+    g.c.fillText(" " + r.period.toFixed(4) + " d ", px, A.y1 + 2);
+  }
+
+  function drawFold(r) {
+    var g = setup($("fold"));
+    if (!r || !DATA) { return; }
+    var NB = 160;
+    var sum = new Float64Array(NB), cnt = new Int32Array(NB);
+    var ph = new Float64Array(DATA.t.length);
+    var i, p;
+    for (i = 0; i < DATA.t.length; i++) {
+      p = DATA.t[i] / r.period;
+      p -= Math.floor(p);
+      p -= r.phaseCentre;                  // put the transit in the middle
+      if (p < -0.5) { p += 1; }
+      if (p > 0.5) { p -= 1; }
+      ph[i] = p;
+      var b = Math.min(NB - 1, Math.floor((p + 0.5) * NB));
+      sum[b] += DATA.y[i]; cnt[b]++;
+    }
+    var lo = pct(DATA.y, 0.002), hi = pct(DATA.y, 0.998);
+    var m = (hi - lo) * 0.10;
+    var A = axes(g, -0.5, 0.5, lo - m, hi + m, "phase", "flux",
+                 function (v) { return v.toFixed(4); });
+
+    g.c.fillStyle = "rgba(170,190,220,0.28)";
+    for (i = 0; i < ph.length; i++) {
+      g.c.fillRect(A.X(ph[i]) - 0.5, A.Y(DATA.y[i]) - 0.5, 1.4, 1.4);
+    }
+
+    // the fitted box
+    var base = r.mean;
+    var half = r.q / 2;
+    g.c.strokeStyle = "#ffbf6b"; g.c.lineWidth = 2; g.c.beginPath();
+    g.c.moveTo(A.X(-0.5), A.Y(base));
+    g.c.lineTo(A.X(-half), A.Y(base));
+    g.c.lineTo(A.X(-half), A.Y(base - r.depth));
+    g.c.lineTo(A.X(half), A.Y(base - r.depth));
+    g.c.lineTo(A.X(half), A.Y(base));
+    g.c.lineTo(A.X(0.5), A.Y(base));
+    g.c.stroke();
+
+    g.c.fillStyle = "#56c8ff";
+    for (i = 0; i < NB; i++) {
+      if (cnt[i] === 0) { continue; }
+      var x = A.X(-0.5 + (i + 0.5) / NB), y = A.Y(sum[i] / cnt[i]);
+      g.c.beginPath(); g.c.arc(x, y, 2.4, 0, 6.2832); g.c.fill();
+    }
+  }
+
+  // ---------- data --------------------------------------------------------
+
+  function parseCSV(text, name) {
+    var lines = text.split(/\r?\n/);
+    var t = [], y = [];
+    for (var i = 0; i < lines.length; i++) {
+      var L = lines[i].trim();
+      if (!L || L.charAt(0) === "#") { continue; }
+      var p = L.split(/[,\s]+/);
+      if (p.length < 2) { continue; }
+      var a = parseFloat(p[0]), b = parseFloat(p[1]);
+      if (!isFinite(a) || !isFinite(b)) { continue; }   // skips the header row
+      t.push(a); y.push(b);
+    }
+    if (t.length < 100) { throw new Error("only " + t.length + " usable rows found"); }
+    return { name: name, t: Float64Array.from(t), y: Float64Array.from(y) };
+  }
+
+  function loaded(d) {
+    DATA = d;
+    var tr = range(d.t);
+    var span = tr[1] - tr[0];
+    $("dataStatus").textContent =
+      d.name + ": " + d.t.length + " measurements over " +
+      span.toFixed(2) + " days.";
+    $("rawMeta").textContent =
+      "Median cadence " + (span * 24 * 60 / d.t.length).toFixed(1) +
+      " minutes. Nothing has been removed and nothing has been smoothed.";
+    if (parseFloat($("pmax").value) > span / 2) {
+      $("pmax").value = (span / 2).toFixed(1);
+    }
+    $("run").disabled = false;
+    RESULT = null;
+    drawRaw(); drawPgram(null); drawFold(null);
+    clearResults();
+  }
+
+  function clearResults() {
+    var ids = ["rPeriod", "rDepth", "rDur", "rSde", "rK", "rRp", "rN"];
+    for (var i = 0; i < ids.length; i++) { $(ids[i]).textContent = "-"; }
+  }
+
+  // ---------- run ---------------------------------------------------------
+
+  function run() {
+    if (!DATA) { return; }
+    var span = DATA.t[DATA.t.length - 1] - DATA.t[0];
+    var pmax = parseFloat($("pmax").value);
+    if (pmax > span / 2) {
+      $("runStatus").textContent =
+        "The longest period has to be under half the " + span.toFixed(1) +
+        " days of data, or a transit could not repeat inside it.";
+      return;
+    }
+    $("run").disabled = true;
+    $("runStatus").textContent = "searching";
+    if (worker) { worker.terminate(); }
+    worker = new Worker("bls.js");
+    worker.onmessage = function (e) {
+      var m = e.data;
+      if (m.kind === "progress") {
+        $("prog").style.width = (100 * m.done / m.total) + "%";
+        return;
+      }
+      $("prog").style.width = "100%";
+      RESULT = m;
+      show(m);
+      $("run").disabled = false;
+      window.setTimeout(function () { $("prog").style.width = "0"; }, 600);
+    };
+    worker.onerror = function (err) {
+      $("runStatus").textContent = "the search failed: " + err.message;
+      $("run").disabled = false;
+    };
+    worker.postMessage({
+      t: DATA.t, y: DATA.y,
+      pmin: parseFloat($("pmin").value),
+      pmax: pmax,
+      nfreq: parseInt($("nfreq").value, 10),
+      nbins: 280,
+      minDur: 0.005,
+      maxDur: 0.12,
+      binMinutes: parseFloat($("binm").value)
+    });
+  }
+
+  var RSUN = 6.957e8, RJUP = 7.1492e7, REARTH = 6.371e6;
+
+  function show(r) {
+    var span = DATA.t[DATA.t.length - 1] - DATA.t[0];
+    $("rPeriod").textContent = r.period.toFixed(5) + " d";
+    $("rDepth").textContent = (r.depth * 100).toFixed(4) + " %  (" +
+                              Math.round(r.depth * 1e6) + " ppm)";
+    $("rDur").textContent = (r.duration * 24).toFixed(3) + " h";
+    $("rSde").textContent = r.sde.toFixed(1) + " sigma";
+    $("rSde").style.color = r.sde >= 7 ? "#7ee0a8" : "#ffbf6b";
+
+    if (r.depth > 0) {
+      var k = Math.sqrt(r.depth);
+      var Rs = parseFloat($("rstar").value) * RSUN;
+      var Rp = k * Rs;
+      $("rK").textContent = k.toFixed(5);
+      $("rRp").textContent = (Rp / RJUP).toFixed(3) + " Rjup  /  " +
+                             (Rp / REARTH).toFixed(2) + " Rearth";
+    }
+    $("rN").textContent = Math.floor(span / r.period) + " expected";
+    $("runStatus").textContent =
+      "Searched " + r.searched + " binned points across " +
+      $("nfreq").value + " trial periods.";
+    drawPgram(r); drawFold(r);
+  }
+
+  // ---------- wiring ------------------------------------------------------
+
+  var demos = document.querySelectorAll(".demo");
+  for (var di = 0; di < demos.length; di++) {
+    demos[di].onclick = function () {
+      var b = this;
+      $("dataStatus").textContent = "loading " + b.textContent;
+      fetch(b.getAttribute("data-file")).then(function (res) {
+        if (!res.ok) { throw new Error("HTTP " + res.status); }
+        return res.text();
+      }).then(function (txt) {
+        loaded(parseCSV(txt, b.getAttribute("data-name")));
+        $("rstar").value = b.getAttribute("data-rstar");
+      })["catch"](function (err) {
+        $("dataStatus").textContent =
+          "could not load that file (" + err.message +
+          "). Serve this folder over http rather than opening it directly.";
+      });
+    };
+  }
+
+  function readFile(f) {
+    var rd = new FileReader();
+    rd.onload = function () {
+      try { loaded(parseCSV(rd.result, f.name)); }
+      catch (err) { $("dataStatus").textContent = "could not read that: " + err.message; }
+    };
+    rd.readAsText(f);
+  }
+
+  $("file").onchange = function () { if (this.files[0]) { readFile(this.files[0]); } };
+
+  var drop = $("drop");
+  ["dragenter", "dragover"].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      e.preventDefault(); drop.className = "drop over";
+    });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      e.preventDefault(); drop.className = "drop";
+    });
+  });
+  document.addEventListener("drop", function (e) {
+    if (e.dataTransfer.files[0]) { readFile(e.dataTransfer.files[0]); }
+  });
+
+  $("run").onclick = run;
+  window.addEventListener("resize", function () {
+    drawRaw(); drawPgram(RESULT); drawFold(RESULT);
+  });
+}());
+</script>
+</body>
+</html>
