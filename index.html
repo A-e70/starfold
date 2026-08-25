@@ -181,6 +181,19 @@
         </dl>
       </div>
       <div class="panel">
+        <h2>Is it really a planet?</h2>
+        <dl id="vet">
+          <div><dt>verdict</dt><dd class="big" id="vVerdict">-</dd></div>
+          <div><dt>true duration, sloped sides</dt><dd id="vT14">-</dd></div>
+          <div><dt>flat part of the floor</dt><dd id="vShape">-</dd></div>
+          <div><dt>odd against even transits</dt><dd id="vOddEven">-</dd></div>
+          <div><dt>eclipse at half an orbit</dt><dd id="vSec">-</dd></div>
+          <div><dt>noise per measurement</dt><dd id="vNoise">-</dd></div>
+        </dl>
+        <p class="note" id="vNote" style="margin-top:14px"></p>
+      </div>
+
+      <div class="panel">
         <h2>Read this before believing it</h2>
         <p class="note">
           <strong>Half and double.</strong> A box search will often land on twice
@@ -414,7 +427,8 @@
   }
 
   function clearResults() {
-    var ids = ["rPeriod", "rDepth", "rDur", "rSde", "rK", "rRp", "rN"];
+    var ids = ["rPeriod", "rDepth", "rDur", "rSde", "rK", "rRp", "rN",
+                "vVerdict", "vT14", "vShape", "vOddEven", "vSec", "vNoise"];
     for (var i = 0; i < ids.length; i++) { $(ids[i]).textContent = "-"; }
   }
 
@@ -482,10 +496,101 @@
                              (Rp / REARTH).toFixed(2) + " Rearth";
     }
     $("rN").textContent = Math.floor(span / r.period) + " expected";
+    showVet(r);
     $("runStatus").textContent =
       "Searched " + r.searched + " binned points across " +
       $("nfreq").value + " trial periods.";
     drawPgram(r); drawFold(r);
+  }
+
+  var GOOD = "#7ee0a8", WARN = "#ffbf6b", BAD = "#ff8b8b";
+
+  function set(id, text, colour) {
+    var el = $(id);
+    el.textContent = text;
+    el.style.color = colour || "";
+  }
+
+  function ppm(v) { return Math.round(v * 1e6) + " ppm"; }
+
+  function showVet(r) {
+    var v = r.vet;
+    var ids = ["vT14", "vShape", "vOddEven", "vSec", "vNoise"];
+    var i;
+    if (!v || !v.ok) {
+      set("vVerdict", "cannot tell", WARN);
+      for (i = 0; i < ids.length; i++) { set(ids[i], "-"); }
+      $("vNote").textContent = v ? v.why : "";
+      return;
+    }
+
+    var fails = [], warns = [];
+
+    // duration and shape
+    if (v.trapT14) {
+      set("vT14", (v.trapT14 * 24).toFixed(3) + " h");
+      var pcFlat = Math.round(v.trapRatio * 100);
+      if (v.trapRatio < 0.2) {
+        set("vShape", pcFlat + " %  V shaped", WARN);
+        warns.push("the floor is barely flat, which means either a grazing " +
+                   "crossing or two stars");
+      } else {
+        set("vShape", pcFlat + " %  flat bottomed", GOOD);
+      }
+    }
+
+    // odd against even
+    if (v.oddEvenSigma !== null && v.oddEvenFrac !== null) {
+      var oeTxt = (v.oddEvenFrac * 100).toFixed(1) + " % apart, " +
+                  v.oddEvenSigma.toFixed(1) + " sigma";
+      var oeBad = v.oddEvenSigma > 3 && v.oddEvenFrac > 0.1;
+      set("vOddEven", oeTxt, oeBad ? BAD : GOOD);
+      if (oeBad) {
+        fails.push("every other transit is a different depth, which is what an " +
+                   "eclipsing binary at twice this period does");
+      }
+    } else {
+      set("vOddEven", "too few transits to test", WARN);
+    }
+
+    // secondary eclipse
+    if (v.secondaryDepth !== null) {
+      var st = ppm(v.secondaryDepth) + ", " + v.secondarySigma.toFixed(1) + " sigma";
+      if (v.secRatio !== null) { st += "  (" + (v.secRatio * 100).toFixed(1) + " % of transit)"; }
+      var secBad = v.secondarySigma > 3 && v.secRatio > 0.3;
+      var secSeen = v.secondarySigma > 3 && !secBad;
+      set("vSec", st, secBad ? BAD : (secSeen ? WARN : GOOD));
+      if (secBad) {
+        fails.push("there is a deep eclipse half an orbit later, so the " +
+                   "companion is giving off its own light and is a star");
+      }
+    }
+
+    if (v.noise) { set("vNoise", ppm(v.noise)); }
+
+    // depth alone rules some things out
+    var deep = r.depth > 0.1;
+    if (deep) {
+      fails.push("a dip this deep needs an object about a third the size of " +
+                 "the star, which is a star");
+    }
+    if (r.sde < 7) {
+      warns.push("the peak is not tall enough above the noise to trust on its own");
+    }
+
+    if (fails.length) {
+      set("vVerdict", "probably not a planet", BAD);
+    } else if (warns.length) {
+      set("vVerdict", "planet, with a caveat", WARN);
+    } else {
+      set("vVerdict", "consistent with a planet", GOOD);
+    }
+
+    var parts = fails.concat(warns);
+    $("vNote").innerHTML = parts.length
+      ? "<strong>Because</strong> " + parts.join(". Also, ") + "."
+      : "Nothing here rules a planet out. A shallow eclipse half an orbit " +
+        "later is the planet's own heat, not a second star.";
   }
 
   // ---------- wiring ------------------------------------------------------

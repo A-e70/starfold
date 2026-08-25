@@ -41,3 +41,27 @@ Open source, no build step, one HTML file plus one worker.
 - [ ] Devlogs posted as you go, not written at the end
 - [ ] README screenshot current
 - [ ] `node tools/check.js` passes
+
+## Second pass: vetting
+
+Finding a dip turned out to be the easy half, so the tool now decides whether
+the dip is a planet.
+
+**Odd against even transits.** A binary at twice the fitted period alternates
+deep and shallow. Measuring each transit separately and comparing the two sets
+by the scatter between transits is the part that matters: the obvious version,
+pooling every point and using the noise on a single measurement, called
+WASP-18 b a thirty sigma failure. It is a planet. Error bars that assume only
+white noise are wrong whenever the telescope drifts between one night and the
+next.
+
+**An eclipse half an orbit later.** On WASP-18 there is one, at 178 ppm, which
+is 1.8 per cent of the transit. Far too shallow for a companion star. That is
+the planet's own thermal emission, which WASP-18 b is hot enough to show.
+
+**Sloped sides.** A trapezoid fit recovers the true duration the box search
+underestimates: 2.130 hours against 2.14 published for WASP-18, 3.144 against
+about 3.0 for HD 209458.
+
+The verdict needs both significance and effect size. Half a per cent at five
+sigma is a systematic, not a second star.

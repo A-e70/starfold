@@ -22,6 +22,36 @@ On the bundled data it recovers **0.94149 days** against the published
 **0.94145** for WASP-18 b, a depth of 0.94 per cent, and a planet radius of
 1.19 Jupiters against 1.165 published.
 
+## Finding a dip is the easy half
+
+Most dips are not planets. starfold runs the three checks a survey runs before
+anyone claims a detection, and shows the verdict with its reasoning.
+
+**Odd against even transits.** A planet gives the same depth every time. An
+eclipsing binary at twice the fitted period alternates between a deep primary
+and a shallow secondary, so the two sets disagree. The depth of each transit is
+measured separately and the two sets are compared using the scatter between
+transits, not the noise on a single measurement. That distinction matters: the
+naive version called WASP-18 b a thirty sigma failure. It is a planet.
+
+**An eclipse half an orbit later.** A companion that gives off its own light
+disappears behind the star and the total dims again. If that second dip is
+comparable to the transit, the companion is a star. On WASP-18 the check finds a
+real one at 178 ppm, which is 1.8 per cent of the transit and far too shallow
+for a star. That is the planet's own heat, and WASP-18 b is hot enough to show
+it. Published analyses fit a full eclipse model and get a deeper value than this
+window does.
+
+**Sloped sides.** The box duration is always too short. Fitting a trapezoid
+recovers the real first to fourth contact time and the length of the flat part.
+WASP-18 comes out at 2.130 hours against 2.14 published, HD 209458 at 3.144
+against about 3.0. A floor that is barely flat means a grazing crossing or two
+stars.
+
+The verdict needs both significance and size before it rejects anything. With a
+bright star a half per cent difference is many sigma and means nothing physical,
+while a real binary alternates by tens of per cent.
+
 ## Running it
 
 ```
@@ -75,6 +105,7 @@ seventeen. Set the bin to 0 to search every point.
 | file | what it is |
 |---|---|
 | `index.html` | the whole interface, the plotting, and the wiring |
-| `bls.js` | the period search, in a worker so the page stays alive |
+| `bls.js` | the period search and the vetting, in a worker |
+| `tools/check.js` | headless regression on both bundled planets |
 | `tools/fetch.py` | builds a CSV from the TESS archive, the only networked part |
 | `data/` | real light curves |
