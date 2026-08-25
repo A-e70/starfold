@@ -22,6 +22,34 @@ On the bundled data it recovers **0.94149 days** against the published
 **0.94145** for WASP-18 b, a depth of 0.94 per cent, and a planet radius of
 1.19 Jupiters against 1.165 published.
 
+## Checked against published values
+
+Both light curves are a single TESS sector, so this is what one month of one
+telescope supports, not what a published analysis of years of data gets.
+
+| quantity | starfold | published |
+|---|---|---|
+| **WASP-18 b** | | |
+| period | 0.94149 d | 0.94145 d |
+| duration, first to fourth contact | 2.130 h | 2.14 h |
+| Rp / Rstar, fitted | 0.09438 | 0.0972 |
+| impact parameter b | 0.398 | 0.36 |
+| a / Rstar | 3.40 | 3.48 |
+| **HD 209458 b** | | |
+| period | 3.52681 d | 3.52475 d |
+| duration, first to fourth contact | 3.144 h | 3.0 h |
+| Rp / Rstar, fitted | 0.12096 | 0.1209 |
+| impact parameter b | 0.602 | 0.507 |
+| a / Rstar | 8.01 | 8.76 |
+
+The period lands to about one part in a thousand and the radius ratio to about
+three per cent. The impact parameter and a/Rstar are the weak pair, within about
+twenty per cent, because they trade against each other: a larger planet crossing
+near the edge makes nearly the same dip as a smaller one crossing the middle,
+and only the shape of the shoulders tells them apart.
+
+`node tools/check.js` asserts every one of these and fails if it moves.
+
 ## Finding a dip is the easy half
 
 Most dips are not planets. starfold runs the three checks a survey runs before
@@ -93,6 +121,32 @@ is worse than no number.
 - The **radius assumes a central crossing and no limb darkening**. Both make the
   real planet bigger than the depth alone suggests.
 
+## A real stellar disc
+
+A star is brighter at the centre than at the edge, so a planet crossing the
+middle blocks more than its share of the light and the depth alone overstates
+its size. starfold fits a limb darkened model instead, integrating the hidden
+light numerically over the planet and searching the radius ratio, the impact
+parameter and the orbit size together.
+
+Three things that cost real time to get right, all still visible in the code:
+
+**The duration cannot be inherited.** The trapezoid width seeds the orbit size
+but is not allowed to fix it. A trapezoid has straight sides and a real ingress
+is curved, so its width comes out about two per cent short. Treating that two
+per cent as exact was enough to force WASP-18 b to a dead central crossing, an
+impact parameter of exactly zero against a published 0.36.
+
+**Limb darkening is an input, not a constant.** u1 and u2 depend on the star and
+on the wavelength observed. WASP-18 is an F6 star and much less limb darkened
+than the Sun, and using solar coefficients on it biases the radius.
+
+**The coefficients have to reach the search.** An edit adding them to the
+regression silently failed, so the check ran WASP-18 with solar coefficients
+while the interactive path used the right ones, and the two disagreed by five
+per cent with neither being wrong. The check now asserts the fitted radius
+against the published value, so it cannot drift quietly again.
+
 ## Speed
 
 The search bins the measurements to ten minutes first. A transit lasts hours, so
@@ -100,12 +154,17 @@ this changes nothing about the shape and cuts the work by five: 18,299 points
 becomes 3,727, and 4,000 trial periods take about three seconds instead of
 seventeen. Set the bin to 0 to search every point.
 
+The limb darkened fit is the slower half. Precomputing each point's orbital
+angle once instead of recomputing it inside every trial, moving the fit onto
+typed arrays and coarsening the grid to what the data actually supports took the
+whole regression from 73 seconds to under 15, with identical results.
+
 ## Layout
 
 | file | what it is |
 |---|---|
 | `index.html` | the whole interface, the plotting, and the wiring |
 | `bls.js` | the period search and the vetting, in a worker |
-| `tools/check.js` | headless regression on both bundled planets |
+| `tools/check.js` | headless regression on both planets, fit included |
 | `tools/fetch.py` | builds a CSV from the TESS archive, the only networked part |
 | `data/` | real light curves |
