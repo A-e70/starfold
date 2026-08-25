@@ -1,6 +1,6 @@
 # starfold
 
-Three rules.
+Four rules, in the order they matter.
 
 0. **The check is the contract.** Three real light curves with published
    answers. Never widen a tolerance to make it pass.
@@ -10,8 +10,9 @@ Three rules.
    archive through `tools/fetch.py` and is unmodified apart from normalisation.
    Never ship a synthetic curve without saying so on the page.
 3. **Every number carries its caveat on the page.** The box duration is short,
-   the radius assumes a central crossing, the period may be a harmonic. These
-   are written in the interface, not buried in a README, and they stay there.
+   b and a/Rstar trade against each other, the period may be a harmonic or an
+   alias. These are written in the interface, not buried in a README, and they
+   stay there. Showing a duplicate detection and naming it beats dropping it.
 
 ## Shape
 
