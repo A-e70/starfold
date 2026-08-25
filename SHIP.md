@@ -65,3 +65,29 @@ about 3.0 for HD 209458.
 
 The verdict needs both significance and effect size. Half a per cent at five
 sigma is a systematic, not a second star.
+
+## Third pass: a real stellar disc
+
+The depth alone assumes an evenly bright star, which no star is. Fitting a limb
+darkened model instead, integrating the blocked light numerically over the
+planet and searching radius ratio, impact parameter and orbit size together,
+gets Rp/Rstar to about three per cent on both bundled planets: 0.12096 against
+0.1209 published for HD 209458 b.
+
+The bug worth writing up: I first let the trapezoid duration fix the orbit size.
+A trapezoid has straight sides and a real ingress is curved, so it comes out
+about two per cent short, and that two per cent was enough to force WASP-18 b to
+a dead central crossing, b of exactly zero against a published 0.36. Letting the
+scale float fixed it. A constraint that is nearly right is worse than one you
+admit you do not have.
+
+Second one, less interesting but more expensive: an edit that added the limb
+darkening coefficients to the regression silently did not apply, so the check
+ran one star with solar coefficients while the interactive path used the right
+ones. Two runs of the same code disagreed by five per cent and neither was
+wrong. Now the check asserts the fitted radius against the published value, so
+it cannot drift quietly again.
+
+Also made it fast enough to sit in front of: hoisting each point's orbital angle
+out of the trial loop, typed arrays, and a grid no finer than the data supports
+took the check from 73 seconds to under 15.

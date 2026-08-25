@@ -32,21 +32,24 @@ function load(f) {
 const CASES = [
    {
       file: "data/wasp-18.csv", name: "WASP-18 b",
+      // WASP-18 is an F6 star, hotter than the Sun and less limb darkened
       search: { pmin: 0.4, pmax: 13, nfreq: 4000, nbins: 280,
-                minDur: 0.005, maxDur: 0.12, binMinutes: 10 },
-      // published: P = 0.94145 d, depth ~0.90 %
-      // published: T14 = 2.14 h
+                minDur: 0.005, maxDur: 0.12, binMinutes: 10,
+                u1: 0.28, u2: 0.30 },
+      // published: P = 0.94145 d, depth ~0.90 %, T14 = 2.14 h,
+      //            Rp/Rs = 0.0972, b = 0.36, a/Rs = 3.48
       expect: { period: [0.9410, 0.9420], depth: [0.0085, 0.0100], sde: [7, 99],
-                trapT14h: [2.0, 2.3] }
+                trapT14h: [2.0, 2.3], fitK: [0.090, 0.102], fitARs: [3.2, 3.8] }
    },
    {
       file: "data/hd-209458.csv", name: "HD 209458 b",
       search: { pmin: 0.4, pmax: 13, nfreq: 4000, nbins: 280,
-                minDur: 0.005, maxDur: 0.12, binMinutes: 10 },
-      // published: P = 3.52475 d, depth ~1.5 %
-      // published: T14 = 3.0 h
+                minDur: 0.005, maxDur: 0.12, binMinutes: 10,
+                u1: 0.40, u2: 0.25 },
+      // published: P = 3.52475 d, depth ~1.5 %, T14 = 3.0 h,
+      //            Rp/Rs = 0.1209, b = 0.507, a/Rs = 8.76
       expect: { period: [3.515, 3.535], depth: [0.013, 0.017], sde: [7, 99],
-                trapT14h: [2.8, 3.4] }
+                trapT14h: [2.8, 3.4], fitK: [0.115, 0.128], fitARs: [7.0, 9.6] }
    }
 ];
 
@@ -62,7 +65,9 @@ for (const c of CASES) {
    const r = self._done;
    const v = r.vet;
    const got = { period: r.period, depth: r.depth, sde: r.sde,
-                 trapT14h: v && v.trapT14 ? v.trapT14 * 24 : NaN };
+                 trapT14h: v && v.trapT14 ? v.trapT14 * 24 : NaN,
+                 fitK: v && v.ld ? v.ld.k : NaN,
+                 fitARs: v && v.ld ? v.ld.aRs : NaN };
    let ok = true;
    for (const k of Object.keys(c.expect)) {
       const [lo, hi] = c.expect[k];
@@ -93,6 +98,8 @@ for (const c of CASES) {
                "  T14=" + (v && v.trapT14 ? (v.trapT14 * 24).toFixed(2) + " h" : "-") +
                "  odd/even=" + (v && v.oddEvenFrac !== null
                   ? (v.oddEvenFrac * 100).toFixed(1) + " %" : "-") +
+               "  k=" + (v && v.ld ? v.ld.k.toFixed(5) : "-") +
+               "  b=" + (v && v.ld ? v.ld.b.toFixed(2) : "-") +
                "  (" + ms.toFixed(0) + " ms)");
 }
 process.exit(bad === 0 ? 0 : 1);

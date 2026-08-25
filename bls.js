@@ -128,7 +128,16 @@ self.onmessage = function (e) {
    const psd = Math.sqrt(pv / nf);
    const sde = psd > 0 ? (power[bestI] - pm) / psd : 0;
 
+   self.postMessage({ kind: "stage", text: "checking whether it is a planet" });
    const checks = vet(d.t, d.y, period, phaseCentre, q);
+   checks.harmonics = harmonics(periods, power, bestI);
+   if (checks.ok && checks.trapT14) {
+      self.postMessage({ kind: "stage", text: "fitting a limb darkened star" });
+      checks.ld = ldfit(d.t, d.y, period, phaseCentre,
+                        checks.trapT14 / period, checks.trapDepth,
+                        d.u1 === undefined ? 0.40 : d.u1,
+                        d.u2 === undefined ? 0.25 : d.u2);
+   }
 
    self.postMessage({
       kind: "done",
@@ -313,5 +322,209 @@ function vet(t, y, period, phaseCentre, q) {
       trapRatio: best ? best.ratio : null,
       trapDepth: best ? best.depth : null,
       trapBase: best ? best.base : null
+   };
+}
+
+// ---------------------------------------------------------------------------
+// A real stellar disc.
+//
+// Everything above treats the star as evenly bright, which it is not. A star is
+// brighter at the centre than at the edge, so a planet crossing the middle
+// blocks more than its share of the light and the depth overstates its size.
+// Fitting a limb darkened model instead gives the radius ratio and the impact
+// parameter properly, and the two are not independent: a large planet crossing
+// the edge makes almost the same dip as a small one crossing the centre. Only
+// the shape of the shoulders tells them apart, which is why this is a fit and
+// not a formula.
+// ---------------------------------------------------------------------------
+
+// Fraction of the star's light hidden by a disc of radius k whose centre sits
+// d stellar radii from the centre of the star. Quadratic limb darkening,
+// integrated numerically over the planet, which is slower than the analytic
+// solution and very much easier to check.
+function occultTable(k, u1, u2, nd) {
+   // The integrand is symmetric about the line joining the two centres, so
+   // only half the angles are computed and the result doubled.
+   const NR = 32, NH = 32;
+   const Fstar = Math.PI * (1 - u1 / 3 - u2 / 6);
+   const tab = new Float64Array(nd + 1);
+   const dmax = 1 + k;
+   const dr = k / NR;
+   const dt = Math.PI / NH;
+   const cos = new Float64Array(NH);
+   for (let b = 0; b < NH; b++) { cos[b] = Math.cos(dt * (b + 0.5)); }
+   for (let i = 0; i <= nd; i++) {
+      const d = dmax * i / nd;
+      let acc = 0;
+      for (let a = 0; a < NR; a++) {
+         const rho = k * (a + 0.5) / NR;
+         const c1 = d * d + rho * rho, c2 = 2 * d * rho;
+         let inner = 0;
+         for (let b = 0; b < NH; b++) {
+            const r2 = c1 + c2 * cos[b];
+            if (r2 >= 1) { continue; }
+            const mu = Math.sqrt(1 - r2);
+            const om = 1 - mu;
+            inner += 1 - u1 * om - u2 * om * om;
+         }
+         acc += inner * rho * dr * dt;
+      }
+      tab[i] = 2 * acc / Fstar;
+   }
+   return { tab: tab, dmax: dmax, nd: nd };
+}
+
+function occult(T, d) {
+   if (d >= T.dmax) { return 0; }
+   const x = d / T.dmax * T.nd;
+   const i = x | 0;
+   if (i >= T.nd) { return T.tab[T.nd]; }
+   const f = x - i;
+   return T.tab[i] * (1 - f) + T.tab[i + 1] * f;
+}
+
+
+// Symmetric 3 by 3 solve, by hand because there is no linear algebra library
+// here and there never will be.
+function solve3(a00, a01, a02, a11, a12, a22, b0, b1, b2) {
+   const det = a00 * (a11 * a22 - a12 * a12)
+             - a01 * (a01 * a22 - a12 * a02)
+             + a02 * (a01 * a12 - a11 * a02);
+   if (!isFinite(det) || Math.abs(det) < 1e-18) { return null; }
+   const i00 = (a11 * a22 - a12 * a12) / det;
+   const i01 = (a02 * a12 - a01 * a22) / det;
+   const i02 = (a01 * a12 - a02 * a11) / det;
+   const i11 = (a00 * a22 - a02 * a02) / det;
+   const i12 = (a02 * a01 - a00 * a12) / det;
+   const i22 = (a00 * a11 - a01 * a01) / det;
+   return [i00 * b0 + i01 * b1 + i02 * b2,
+           i01 * b0 + i11 * b1 + i12 * b2,
+           i02 * b0 + i12 * b1 + i22 * b2];
+}
+
+function ldfit(t, y, period, phaseCentre, w14, depth, u1, u2) {
+   // Only the points near the transit carry any information about its shape.
+   const win = Math.min(0.45, Math.max(w14 * 1.6, w14 / 2 + 0.01));
+   const n0 = t.length;
+   const pxa = new Float64Array(n0), pya = new Float64Array(n0);
+   let m = 0;
+   for (let i = 0; i < n0; i++) {
+      const u = t[i] / period - phaseCentre;
+      const ph = u - Math.round(u);
+      if (Math.abs(ph) < win) { pxa[m] = ph; pya[m] = y[i]; m++; }
+   }
+   // Typed arrays, not plain ones. These two are read a few million times
+   // inside the grid search and the difference is not small.
+   const px = pxa.subarray(0, m), py = pya.subarray(0, m);
+
+   // The orbital angle of each point never changes as the fit walks its grid,
+   // so its sine and cosine are computed once here rather than a few million
+   // times inside the loop. Same for the quadratic basis of the baseline.
+   const sa = new Float64Array(m), ca = new Float64Array(m), p2 = new Float64Array(m);
+   for (let i = 0; i < m; i++) {
+      const ang = 2 * Math.PI * px[i];
+      sa[i] = Math.sin(ang); ca[i] = Math.cos(ang); p2[i] = px[i] * px[i];
+   }
+   if (m < 200 || !(w14 > 0) || !(depth > 0)) { return null; }
+
+   const sinT = Math.sin(Math.PI * w14);        // w14 is already a phase fraction
+   if (!(sinT > 0)) { return null; }
+
+   const k0 = Math.sqrt(depth);
+
+   // The trapezoid duration seeds the orbit size but does not fix it. The
+   // trapezoid has straight sides and a real ingress is curved, so its width
+   // comes out a couple of per cent short. Treating that as exact was enough
+   // to force WASP-18 b to a dead central crossing, so the scale is a fitted
+   // parameter with the trapezoid only setting where to start looking.
+   const mod = new Float64Array(m);
+
+   function scan(kLo, kHi, nk, bLo, bHi, nb, sLo, sHi, ns) {
+      let win2 = null;
+      for (let ki = 0; ki <= nk; ki++) {
+         const k = kLo + (kHi - kLo) * ki / nk;
+         if (k <= 0.001 || k >= 0.5) { continue; }
+         const T = occultTable(k, u1, u2, 100);
+         for (let bi = 0; bi <= nb; bi++) {
+            const b = bLo + (bHi - bLo) * bi / nb;
+            if (b < 0) { continue; }
+            const num = (1 + k) * (1 + k) - b * b;
+            if (num <= 0) { continue; }
+            const aRs0 = Math.sqrt(b * b + num / (sinT * sinT));
+            if (aRs0 <= 1) { continue; }
+            for (let si = 0; si <= ns; si++) {
+            const aRs = aRs0 * (sLo + (sHi - sLo) * (ns ? si / ns : 0));
+            if (aRs <= 1 || aRs <= b) { continue; }
+            // The baseline either side of the transit is not always flat. A
+            // planet this close raises tides on its star, and the star's
+            // changing shape modulates the light over the orbit. Forcing a
+            // flat baseline pushes that curvature into the transit and drags
+            // the fit to a central crossing. So the baseline is a quadratic in
+            // phase, solved exactly alongside the depth at every trial.
+            let A00 = 0, A01 = 0, A02 = 0, A11 = 0, A12 = 0, A22 = 0;
+            let B0 = 0, B1 = 0, B2 = 0;
+            for (let i = 0; i < m; i++) {
+               const dx = aRs * sa[i];
+               const dy = b * ca[i];
+               const f = 1 - occult(T, Math.sqrt(dx * dx + dy * dy));
+               mod[i] = f;
+               const g0 = f, g1 = f * px[i], g2 = g1 * px[i];
+               A00 += g0 * g0; A01 += g0 * g1; A02 += g0 * g2;
+               A11 += g1 * g1; A12 += g1 * g2; A22 += g2 * g2;
+               B0 += g0 * py[i]; B1 += g1 * py[i]; B2 += g2 * py[i];
+            }
+            const c = solve3(A00, A01, A02, A11, A12, A22, B0, B1, B2);
+            if (!c) { continue; }
+            let chi = 0;
+            const c0 = c[0], c1 = c[1], c2 = c[2];
+            for (let i = 0; i < m; i++) {
+               const r = py[i] - mod[i] * (c0 + c1 * px[i] + c2 * p2[i]);
+               chi += r * r;
+            }
+            if (win2 === null || chi < win2.chi) {
+               win2 = { chi: chi, k: k, b: b, aRs: aRs, base: c[0],
+                        slope: c[1], curve: c[2], scale: aRs / aRs0 };
+            }
+            }
+         }
+      }
+      return win2;
+   }
+
+   const coarse = scan(k0 * 0.75, k0 * 1.25, 12, 0, 1 + k0 * 1.25, 12,
+                       0.90, 1.10, 6);
+   if (!coarse) { return null; }
+   const dk = k0 * 0.50 / 12, db = (1 + k0 * 1.25) / 12, ds = 0.20 / 6;
+   const best = scan(coarse.k - dk, coarse.k + dk, 8,
+                     Math.max(0, coarse.b - db), coarse.b + db, 8,
+                     coarse.scale - ds, coarse.scale + ds, 4) || coarse;
+
+   if (!best) { return null; }
+   best.inc = Math.acos(best.b / best.aRs) * 180 / Math.PI;
+   best.rms = Math.sqrt(best.chi / m);
+   best.n = m;
+   return best;
+}
+
+// Which multiple of the period is the real one. A box search is just as happy
+// with half or twice the truth, and the periodogram says so if you look.
+function harmonics(periods, power, bestI) {
+   function at(p) {
+      // the grid runs from the longest period down to the shortest
+      if (p > periods[0] || p < periods[periods.length - 1]) { return null; }
+      // the grid is uniform in frequency, not in period
+      let lo = 0, hi = periods.length - 1;
+      while (hi - lo > 1) {
+         const mid = (lo + hi) >> 1;
+         if (periods[mid] > p) { lo = mid; } else { hi = mid; }
+      }
+      return Math.max(power[lo], power[hi]);
+   }
+   const peak = power[bestI], P = periods[bestI];
+   const h = at(P / 2), d = at(P * 2);
+   return {
+      peak: peak,
+      half: h, halfRatio: h === null ? null : h / peak,
+      double: d, doubleRatio: d === null ? null : d / peak
    };
 }

@@ -108,10 +108,10 @@
         <div style="display:flex;gap:8px">
           <button class="ghost demo" data-file="data/wasp-18.csv"
                   data-name="WASP-18, TESS 2 minute cadence"
-                  data-rstar="1.26">WASP-18</button>
+                  data-rstar="1.26" data-u1="0.28" data-u2="0.30">WASP-18</button>
           <button class="ghost demo" data-file="data/hd-209458.csv"
                   data-name="HD 209458, TESS 2 minute cadence"
-                  data-rstar="1.155">HD 209458</button>
+                  data-rstar="1.155" data-u1="0.40" data-u2="0.25">HD 209458</button>
         </div>
       </div>
       <label class="ghost" style="cursor:pointer">
@@ -135,6 +135,10 @@
         <input type="number" id="binm" value="10" step="5" min="0"></div>
       <div class="field"><label>star radius, Suns</label>
         <input type="number" id="rstar" value="1.26" step="0.01" min="0.01"></div>
+      <div class="field"><label>limb darkening u1</label>
+        <input type="number" id="u1" value="0.28" step="0.01" min="0" max="1"></div>
+      <div class="field"><label>limb darkening u2</label>
+        <input type="number" id="u2" value="0.30" step="0.01" min="0" max="1"></div>
       <button id="run" disabled>Search</button>
     </div>
     <div class="bar"><i id="prog"></i></div>
@@ -188,6 +192,10 @@
           <div><dt>flat part of the floor</dt><dd id="vShape">-</dd></div>
           <div><dt>odd against even transits</dt><dd id="vOddEven">-</dd></div>
           <div><dt>eclipse at half an orbit</dt><dd id="vSec">-</dd></div>
+          <div><dt>impact parameter b</dt><dd id="vB">-</dd></div>
+          <div><dt>a / Rstar</dt><dd id="vA">-</dd></div>
+          <div><dt>inclination</dt><dd id="vInc">-</dd></div>
+          <div><dt>half and double the period</dt><dd id="vHarm">-</dd></div>
           <div><dt>noise per measurement</dt><dd id="vNoise">-</dd></div>
         </dl>
         <p class="note" id="vNote" style="margin-top:14px"></p>
@@ -211,7 +219,19 @@
           first to fourth contact time by roughly the ingress duration.
         </p>
         <p class="note">
-          <strong>Radius assumes the crossing is central.</strong> Depth gives
+          <strong>b and a/Rstar trade against each other.</strong> A large planet
+          crossing the edge makes nearly the same dip as a smaller one crossing
+          the middle. Only the shape of the shoulders separates them, so those
+          two land within about twenty per cent while the radius ratio itself
+          comes out to a few per cent.
+        </p>
+        <p class="note">
+          <strong>Limb darkening is yours to set.</strong> u1 and u2 depend on
+          the star and on the wavelength observed. The defaults suit the star
+          loaded. Wrong coefficients bias the radius.
+        </p>
+        <p class="note">
+          <strong>Depth alone assumes the crossing is central.</strong> Depth gives
           Rp/Rs only for a planet crossing the middle of the disc, and only with
           no limb darkening. Off centre or a bright limb both make the real
           planet larger than this says.
@@ -428,7 +448,8 @@
 
   function clearResults() {
     var ids = ["rPeriod", "rDepth", "rDur", "rSde", "rK", "rRp", "rN",
-                "vVerdict", "vT14", "vShape", "vOddEven", "vSec", "vNoise"];
+                "vVerdict", "vT14", "vShape", "vOddEven", "vSec", "vNoise",
+                "vB", "vA", "vInc", "vHarm"];
     for (var i = 0; i < ids.length; i++) { $(ids[i]).textContent = "-"; }
   }
 
@@ -454,6 +475,10 @@
         $("prog").style.width = (100 * m.done / m.total) + "%";
         return;
       }
+      if (m.kind === "stage") {
+        $("runStatus").textContent = m.text;
+        return;
+      }
       $("prog").style.width = "100%";
       RESULT = m;
       show(m);
@@ -472,7 +497,9 @@
       nbins: 280,
       minDur: 0.005,
       maxDur: 0.12,
-      binMinutes: parseFloat($("binm").value)
+      binMinutes: parseFloat($("binm").value),
+      u1: parseFloat($("u1").value),
+      u2: parseFloat($("u2").value)
     });
   }
 
@@ -487,11 +514,13 @@
     $("rSde").textContent = r.sde.toFixed(1) + " sigma";
     $("rSde").style.color = r.sde >= 7 ? "#7ee0a8" : "#ffbf6b";
 
-    if (r.depth > 0) {
-      var k = Math.sqrt(r.depth);
+    var fitted = r.vet && r.vet.ok && r.vet.ld ? r.vet.ld.k : null;
+    if (fitted || r.depth > 0) {
+      var k = fitted || Math.sqrt(r.depth);
       var Rs = parseFloat($("rstar").value) * RSUN;
       var Rp = k * Rs;
-      $("rK").textContent = k.toFixed(5);
+      $("rK").textContent = k.toFixed(5) +
+        (fitted ? "  fitted" : "  from depth");
       $("rRp").textContent = (Rp / RJUP).toFixed(3) + " Rjup  /  " +
                              (Rp / REARTH).toFixed(2) + " Rearth";
     }
@@ -515,7 +544,8 @@
 
   function showVet(r) {
     var v = r.vet;
-    var ids = ["vT14", "vShape", "vOddEven", "vSec", "vNoise"];
+    var ids = ["vT14", "vShape", "vOddEven", "vSec", "vNoise",
+                 "vB", "vA", "vInc", "vHarm"];
     var i;
     if (!v || !v.ok) {
       set("vVerdict", "cannot tell", WARN);
@@ -566,6 +596,29 @@
       }
     }
 
+    if (v.ld) {
+      set("vB", v.ld.b.toFixed(3));
+      set("vA", v.ld.aRs.toFixed(2));
+      set("vInc", v.ld.inc.toFixed(2) + " deg");
+    } else {
+      set("vB", "fit did not converge", WARN);
+    }
+
+    var H = v.harmonics;
+    if (H) {
+      var hp = [];
+      if (H.halfRatio !== null) { hp.push("half " + Math.round(H.halfRatio * 100) + " %"); }
+      if (H.doubleRatio !== null) { hp.push("double " + Math.round(H.doubleRatio * 100) + " %"); }
+      var harmBad = (H.halfRatio !== null && H.halfRatio > 0.9) ||
+                    (H.doubleRatio !== null && H.doubleRatio > 0.9);
+      set("vHarm", hp.length ? hp.join(", ") + " of peak" : "both off the grid",
+          harmBad ? WARN : "");
+      if (harmBad) {
+        warns.push("half or twice this period scores almost as well, so check " +
+                   "the folded plot before trusting the period");
+      }
+    }
+
     if (v.noise) { set("vNoise", ppm(v.noise)); }
 
     // depth alone rules some things out
@@ -606,6 +659,8 @@
       }).then(function (txt) {
         loaded(parseCSV(txt, b.getAttribute("data-name")));
         $("rstar").value = b.getAttribute("data-rstar");
+        $("u1").value = b.getAttribute("data-u1");
+        $("u2").value = b.getAttribute("data-u2");
       })["catch"](function (err) {
         $("dataStatus").textContent =
           "could not load that file (" + err.message +
