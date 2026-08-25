@@ -90,6 +90,16 @@
   }
   .drop.over { border-color: var(--accent); color: var(--accent); }
   .status { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 20px; }
+  .chip {
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 9px 14px; cursor: pointer; font: inherit;
+    font-size: 13px; text-align: left; line-height: 1.4;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip.on { border-color: var(--accent); background: #12293f; }
+  .chip b { display: block; font-size: 15px; font-weight: 600; }
+  .chip small { color: var(--muted); }
+  .chip.dim b, .chip.dim small { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -112,6 +122,9 @@
           <button class="ghost demo" data-file="data/hd-209458.csv"
                   data-name="HD 209458, TESS 2 minute cadence"
                   data-rstar="1.155" data-u1="0.40" data-u2="0.25">HD 209458</button>
+          <button class="ghost demo" data-file="data/toi-270.csv"
+                  data-name="TOI-270, TESS 2 minute cadence"
+                  data-rstar="0.378" data-u1="0.35" data-u2="0.30">TOI-270</button>
         </div>
       </div>
       <label class="ghost" style="cursor:pointer">
@@ -133,6 +146,8 @@
         <input type="number" id="nfreq" value="4000" step="500" min="200"></div>
       <div class="field"><label>time bin, minutes</label>
         <input type="number" id="binm" value="10" step="5" min="0"></div>
+      <div class="field"><label>planets to look for</label>
+        <input type="number" id="maxp" value="3" step="1" min="1" max="6"></div>
       <div class="field"><label>star radius, Suns</label>
         <input type="number" id="rstar" value="1.26" step="0.01" min="0.01"></div>
       <div class="field"><label>limb darkening u1</label>
@@ -143,6 +158,12 @@
     </div>
     <div class="bar"><i id="prog"></i></div>
     <div class="status" id="runStatus"></div>
+  </div>
+
+  <div class="panel" id="foundPanel" style="display:none">
+    <h2>What turned up</h2>
+    <div class="row" id="found" style="gap:8px"></div>
+    <p class="meta" id="foundNote" style="margin:14px 0 0"></p>
   </div>
 
   <div class="panel">
@@ -248,6 +269,9 @@
 
   var DATA = null;          // {name, t: Float64Array, y: Float64Array}
   var RESULT = null;
+  var PLANETS = [];
+  var SELECTED = -1;
+  var DISTINCT = 0;
   var worker = null;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -304,6 +328,16 @@
     };
   }
 
+  // Enough decimal places for the range actually on screen. A periodogram of
+  // shallow transits sits near a thousandth, and three decimals renders every
+  // tick as 0.000.
+  function tickFmt(lo, hi) {
+    var r = Math.abs(hi - lo);
+    if (!(r > 0)) { return function (v) { return v.toFixed(3); }; }
+    var d = Math.min(8, Math.max(2, Math.ceil(-Math.log(r) / Math.LN10) + 2));
+    return function (v) { return v.toFixed(d); };
+  }
+
   function fmt(v, n) {
     if (!isFinite(v)) { return "-"; }
     return v.toFixed(n);
@@ -332,7 +366,7 @@
     var lo = pct(DATA.y, 0.001), hi = pct(DATA.y, 0.999);
     var m = (hi - lo) * 0.12;
     var A = axes(g, tr[0], tr[1], lo - m, hi + m, "days", "flux",
-                 function (v) { return v.toFixed(4); });
+                 tickFmt(lo - m, hi + m));
     g.c.fillStyle = "rgba(200,216,240,0.5)";
     for (var i = 0; i < DATA.t.length; i++) {
       g.c.fillRect(A.X(DATA.t[i]) - 0.5, A.Y(DATA.y[i]) - 0.5, 1, 1);
@@ -344,7 +378,7 @@
     if (!r) { return; }
     var pr = range(r.periods), qr = range(r.power);
     var A = axes(g, pr[0], pr[1], 0, qr[1] * 1.08, "period, days", "power",
-                 function (v) { return v.toFixed(3); });
+                 tickFmt(0, qr[1] * 1.08));
     g.c.strokeStyle = "#56c8ff"; g.c.lineWidth = 1; g.c.beginPath();
     for (var i = 0; i < r.periods.length; i++) {
       var x = A.X(r.periods[i]), y = A.Y(r.power[i]);
@@ -382,7 +416,7 @@
     var lo = pct(DATA.y, 0.002), hi = pct(DATA.y, 0.998);
     var m = (hi - lo) * 0.10;
     var A = axes(g, -0.5, 0.5, lo - m, hi + m, "phase", "flux",
-                 function (v) { return v.toFixed(4); });
+                 tickFmt(lo - m, hi + m));
 
     g.c.fillStyle = "rgba(170,190,220,0.28)";
     for (i = 0; i < ph.length; i++) {
@@ -467,6 +501,10 @@
     }
     $("run").disabled = true;
     $("runStatus").textContent = "searching";
+    PLANETS = [];
+    SELECTED = -1;
+    DISTINCT = 0;
+    renderFound();
     if (worker) { worker.terminate(); }
     worker = new Worker("bls.js");
     worker.onmessage = function (e) {
@@ -479,10 +517,18 @@
         $("runStatus").textContent = m.text;
         return;
       }
+      if (m.kind === "planet") {
+        PLANETS.push(m);
+        renderFound();
+        if (PLANETS.length === 1) { select(0); }
+        return;
+      }
       $("prog").style.width = "100%";
-      RESULT = m;
-      show(m);
       $("run").disabled = false;
+      DISTINCT = m.distinct;
+      renderFound();
+      if (RESULT) { setStatus(RESULT); }
+      else { $("runStatus").textContent = "nothing found."; }
       window.setTimeout(function () { $("prog").style.width = "0"; }, 600);
     };
     worker.onerror = function (err) {
@@ -498,6 +544,8 @@
       minDur: 0.005,
       maxDur: 0.12,
       binMinutes: parseFloat($("binm").value),
+      maxPlanets: parseInt($("maxp").value, 10),
+      minSde: 7,
       u1: parseFloat($("u1").value),
       u2: parseFloat($("u2").value)
     });
@@ -526,9 +574,7 @@
     }
     $("rN").textContent = Math.floor(span / r.period) + " expected";
     showVet(r);
-    $("runStatus").textContent =
-      "Searched " + r.searched + " binned points across " +
-      $("nfreq").value + " trial periods.";
+    setStatus(r);
     drawPgram(r); drawFold(r);
   }
 
@@ -644,6 +690,58 @@
       ? "<strong>Because</strong> " + parts.join(". Also, ") + "."
       : "Nothing here rules a planet out. A shallow eclipse half an orbit " +
         "later is the planet's own heat, not a second star.";
+  }
+
+  function setStatus(r) {
+    $("runStatus").textContent =
+      "Showing " + (r.alias ? "signal " + r.index + ", the same object as " +
+        r.alias.of : "candidate " + r.index) + ". Searched " + r.searched +
+      " binned points of the " + r.remaining + " still uncut.";
+  }
+
+  function renderFound() {
+    var box = $("found");
+    box.innerHTML = "";
+    $("foundPanel").style.display = PLANETS.length ? "" : "none";
+    for (var i = 0; i < PLANETS.length; i++) {
+      (function (i) {
+        var p = PLANETS[i];
+        var btn = document.createElement("button");
+        var cls = "chip" + (i === SELECTED ? " on" : "");
+        if (p.alias || !p.convincing) { cls += " dim"; }
+        btn.className = cls;
+        var label = p.alias
+          ? "same signal as " + p.alias.of
+          : (p.convincing ? "candidate " + p.index : "too weak to trust");
+        btn.innerHTML = "<b>" + p.period.toFixed(4) + " d</b><small>" +
+                        label + " · " + (p.depth * 100).toFixed(3) + " % · " +
+                        p.sde.toFixed(1) + " sigma</small>";
+        btn.onclick = function () { select(i); };
+        box.appendChild(btn);
+      }(i));
+    }
+    var note = "";
+    if (DISTINCT > 0) {
+      note = DISTINCT === 1
+        ? "One distinct signal survived. "
+        : DISTINCT + " distinct signals survived. ";
+      note += "Each search runs on what is left after the previous transit was " +
+              "cut out. A period within a few per cent of an earlier one, or a " +
+              "simple multiple of it, is the same object seen again: with only " +
+              "a few transits in the data the period is not pinned down, and " +
+              "cutting one alias out leaves its neighbours standing.";
+    }
+    $("foundNote").textContent = note;
+  }
+
+  function select(i) {
+    SELECTED = i;
+    RESULT = PLANETS[i];
+    if (RESULT.vet && RESULT.vet.ld) {
+      // nothing to do, the fit came with it
+    }
+    show(RESULT);
+    renderFound();
   }
 
   // ---------- wiring ------------------------------------------------------

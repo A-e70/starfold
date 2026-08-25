@@ -2,6 +2,8 @@
 
 Three rules.
 
+0. **The check is the contract.** Three real light curves with published
+   answers. Never widen a tolerance to make it pass.
 1. **No dependencies and no build step.** One HTML file, one worker, one Python
    helper that is optional. If something needs npm it does not belong here.
 2. **Real data or clearly labelled.** Everything in `data/` came from the TESS
@@ -27,9 +29,14 @@ too or they collide.
 
 ## Before claiming it works
 
-The regression is the bundled data: WASP-18 must come back at 0.94149 days,
-0.94 per cent deep, 9.7 sigma. `node tools/check.js` runs the search headless
-and fails if any of those move.
+`node tools/check.js` runs the whole pipeline headless on all three bundled
+light curves and asserts against the published values, not against whatever the
+code last printed: period, duration, the fitted radius ratio and a/Rstar, that
+neither real planet is rejected by the vetting, and that TOI-270 yields two
+distinct planets with TOI-270 b among them. It takes about half a minute.
+
+If a change moves any of those, the change is wrong or the tolerance is a lie.
+Widening a tolerance to make the check pass is the one edit never to make here.
 
 The browser matters separately. Console errors do not show up in the node check:
 

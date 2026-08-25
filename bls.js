@@ -44,11 +44,14 @@ function fold(t, y, w, freq, nbins, binSum, binW) {
    }
 }
 
-self.onmessage = function (e) {
-   const d = e.data;
+// One pass of the whole pipeline over whatever data it is handed. Called once
+// per planet: after each detection the transit is cut out and this runs again
+// on what is left, which is how a survey finds the second and third planet in a
+// system rather than stopping at the loudest one.
+function searchOne(d, ft, fy) {
    const dec = d.binMinutes > 0
-      ? decimate(d.t, d.y, d.binMinutes / (24 * 60))
-      : { t: d.t, y: d.y };
+      ? decimate(ft, fy, d.binMinutes / (24 * 60))
+      : { t: ft, y: fy };
    const t = dec.t;
    const yin = dec.y;
    const N = t.length;
@@ -77,13 +80,12 @@ self.onmessage = function (e) {
    const power = new Float64Array(nf);
 
    let bestSR = -1, bestI = -1, bestStart = 0, bestWidth = 0, bestS = 0, bestR = 0;
+   let bestFreq = 0;
    const step = Math.max(1, Math.floor(nf / 50));
 
-   for (let k = 0; k < nf; k++) {
-      const freq = fmin + k * df;
-      periods[k] = 1 / freq;
+   // Score one trial frequency: fold, then try every box position and width.
+   function score(freq) {
       fold(t, y, w, freq, nbins, binSum, binW);
-
       let localBest = 0, lStart = 0, lWidth = 0, lS = 0, lR = 0;
       for (let i = 0; i < nbins; i++) {
          let s = 0, r = 0;
@@ -102,19 +104,54 @@ self.onmessage = function (e) {
             }
          }
       }
-      power[k] = Math.sqrt(localBest);
-      if (localBest > bestSR) {
-         bestSR = localBest; bestI = k;
-         bestStart = lStart; bestWidth = lWidth; bestS = lS; bestR = lR;
+      return { sr: localBest, start: lStart, width: lWidth, s: lS, r: lR };
+   }
+
+   for (let k = 0; k < nf; k++) {
+      const freq = fmin + k * df;
+      periods[k] = 1 / freq;
+      const q1 = score(freq);
+      power[k] = Math.sqrt(q1.sr);
+      if (q1.sr > bestSR) {
+         bestSR = q1.sr; bestI = k; bestFreq = freq;
+         bestStart = q1.start; bestWidth = q1.width; bestS = q1.s; bestR = q1.r;
       }
       if (k % step === 0) {
          self.postMessage({ kind: "progress", done: k, total: nf });
       }
    }
 
+   // The grid is too coarse to mask on. Over a short baseline a peak found to
+   // one part in fifty is a period wrong by two per cent, and after three or
+   // four orbits the cut window has slid clear of the transit it was meant to
+   // remove. That is how the same planet gets found twice. So the winning
+   // frequency is refined on a grid a hundred times finer before anything is
+   // done with it. The periodogram above keeps its original resolution: this
+   // refinement is about the answer, not the picture.
+   if (bestI >= 0) {
+      let lo = bestFreq - df, hi = bestFreq + df;
+      for (let pass = 0; pass < 2; pass++) {
+         const NR = 60, dfr = (hi - lo) / NR;
+         let rBest = bestSR, rFreq = bestFreq;
+         let rS = bestStart, rW = bestWidth, rSs = bestS, rRr = bestR;
+         for (let k = 0; k <= NR; k++) {
+            const f = lo + k * dfr;
+            if (f <= 0) { continue; }
+            const q2 = score(f);
+            if (q2.sr > rBest) {
+               rBest = q2.sr; rFreq = f;
+               rS = q2.start; rW = q2.width; rSs = q2.s; rRr = q2.r;
+            }
+         }
+         bestSR = rBest; bestFreq = rFreq;
+         bestStart = rS; bestWidth = rW; bestS = rSs; bestR = rRr;
+         lo = bestFreq - dfr; hi = bestFreq + dfr;
+      }
+   }
+
    // Depth of the best fitting box, and where its centre falls in phase.
    const depth = -bestS / (bestR * (1 - bestR));
-   const period = periods[bestI];
+   const period = 1 / bestFreq;
    const q = bestWidth / nbins;
    const phaseCentre = ((bestStart + bestWidth / 2) % nbins) / nbins;
 
@@ -129,25 +166,91 @@ self.onmessage = function (e) {
    const sde = psd > 0 ? (power[bestI] - pm) / psd : 0;
 
    self.postMessage({ kind: "stage", text: "checking whether it is a planet" });
-   const checks = vet(d.t, d.y, period, phaseCentre, q);
+   const checks = vet(ft, fy, period, phaseCentre, q);
    checks.harmonics = harmonics(periods, power, bestI);
    if (checks.ok && checks.trapT14) {
       self.postMessage({ kind: "stage", text: "fitting a limb darkened star" });
-      checks.ld = ldfit(d.t, d.y, period, phaseCentre,
+      checks.ld = ldfit(ft, fy, period, phaseCentre,
                         checks.trapT14 / period, checks.trapDepth,
                         d.u1 === undefined ? 0.40 : d.u1,
                         d.u2 === undefined ? 0.25 : d.u2);
    }
 
-   self.postMessage({
-      kind: "done",
+   return {
       vet: checks,
       periods: periods, power: power,
       period: period, depth: depth, q: q,
       duration: q * period, phaseCentre: phaseCentre, sde: sde,
-      searched: N,
+      searched: N, remaining: ft.length,
       mean: mean
-   }, [periods.buffer, power.buffer]);
+   };
+}
+
+self.onmessage = function (e) {
+   const d = e.data;
+   const maxP = d.maxPlanets > 0 ? d.maxPlanets : 1;
+   const minSde = d.minSde > 0 ? d.minSde : 7;
+   let ft = d.t, fy = d.y;
+   const accepted = [];
+
+   for (let p = 0; p < maxP; p++) {
+      self.postMessage({
+         kind: "stage",
+         text: p === 0 ? "searching every period"
+                       : "searching again with " + p +
+                         (p === 1 ? " transit" : " transits") + " cut out"
+      });
+      const r = searchOne(d, ft, fy);
+      if (!r) { break; }
+      r.kind = "planet";
+      r.index = p + 1;
+
+      // Is this actually a new planet, or the same signal again? When a
+      // baseline holds only three transits the period is not pinned down, and
+      // cutting one alias out leaves the others standing. A signal at nearly
+      // the same period as an earlier one, or at a simple multiple of it, is
+      // the same object and is labelled as such rather than counted twice.
+      r.alias = null;
+      for (let a = 0; a < accepted.length; a++) {
+         const ratio = r.period / accepted[a].period;
+         const cands = [1, 2, 0.5, 3, 1 / 3, 1.5, 2 / 3];
+         for (let ci = 0; ci < cands.length; ci++) {
+            if (Math.abs(ratio / cands[ci] - 1) < 0.04) {
+               r.alias = { of: accepted[a].index, ratio: cands[ci] };
+               break;
+            }
+         }
+         if (r.alias) { break; }
+      }
+      // A signal that is not convincing on its own does not get to be a
+      // planet, even when its period is new.
+      r.convincing = r.sde >= minSde;
+      if (!r.alias && r.convincing) {
+         accepted.push({ index: r.index, period: r.period });
+      }
+      r.distinct = accepted.length;
+      r.last = (p === maxP - 1) || r.sde < minSde;
+      self.postMessage(r, [r.periods.buffer, r.power.buffer]);
+      // A candidate that is not convincing on its own is reported and then the
+      // search stops. Digging past it only produces noise dressed as planets.
+      if (r.sde < minSde) { break; }
+
+      // Cut this transit out and look at what is left. The window is a little
+      // wider than the transit so the sloped edges go too, since leaving them
+      // in gives the next pass a residual dip to lock onto.
+      const halfPh = (r.vet && r.vet.ok && r.vet.trapT14
+                        ? r.vet.trapT14 / r.period : r.q) * 0.75;
+      const kt = new Float64Array(ft.length), ky = new Float64Array(ft.length);
+      let m = 0;
+      for (let i = 0; i < ft.length; i++) {
+         const u = ft[i] / r.period - r.phaseCentre;
+         const ph = u - Math.round(u);
+         if (Math.abs(ph) > halfPh) { kt[m] = ft[i]; ky[m] = fy[i]; m++; }
+      }
+      if (m < 500) { break; }
+      ft = kt.subarray(0, m); fy = ky.subarray(0, m);
+   }
+   self.postMessage({ kind: "done", distinct: accepted.length });
 };
 
 // ---------------------------------------------------------------------------

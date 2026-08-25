@@ -91,3 +91,30 @@ it cannot drift quietly again.
 Also made it fast enough to sit in front of: hoisting each point's orbital angle
 out of the trial loop, typed arrays, and a grid no finer than the data supports
 took the check from 73 seconds to under 15.
+
+## Fourth pass: more than one planet
+
+Real systems have several planets, so the search now cuts out the transit it
+found and runs again on what is left. On TOI-270 it recovers TOI-270 b at 3.3610
+days against 3.3601 published, alongside its larger sibling. The system's third
+planet sits at 11.38 days and cannot repeat inside a 20 day baseline, so it is
+correctly not found.
+
+The masking was the easy part. The problem was that the same planet kept turning
+up twice. Over a 20 day baseline a period is only good to a per cent or two, and
+a mask built on a period that is two per cent wrong slides clear of the transit
+it was meant to remove after three orbits. So the search reported TOI-270 c at
+5.78 days, cut nothing useful out, and found it again at 5.57.
+
+Two fixes. The winning frequency is now refined on a grid a hundred times finer
+than the periodogram before anything is cut, which also improved the single
+planet results for free: HD 209458 b moved from 3.52681 days to 3.52403 against
+3.52475 published, and its impact parameter from 0.60 to 0.53 against 0.507. And
+a period within four per cent of an earlier one, or at a simple multiple of it,
+is labelled the same object rather than counted as a new planet.
+
+The interface shows every signal it turned up, marks the aliases and the ones
+too weak to trust, and says how many distinct planets survived. Showing the
+duplicates and naming them is more useful than quietly dropping them, because
+the reason they exist, a period that a short baseline cannot pin down, is a real
+limit of the data rather than a bug to hide.
