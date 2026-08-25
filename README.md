@@ -18,9 +18,13 @@ measurements onto the best one, and the transit appears.
 3. **Folds and shows you.** The periodogram, the folded curve, the fitted box,
    and the numbers that come out of it.
 
+4. **Decides whether to believe it.** Odd transits against even ones, an
+   eclipse half an orbit later, and a limb darkened fit for the radius, the
+   impact parameter and the orbit size.
+
 On the bundled data it recovers **0.94149 days** against the published
-**0.94145** for WASP-18 b, a depth of 0.94 per cent, and a planet radius of
-1.19 Jupiters against 1.165 published.
+**0.94145** for WASP-18 b, and a planet radius of **1.157 Jupiters** against
+1.165 published.
 
 ## Checked against published values
 
@@ -118,8 +122,11 @@ is worse than no number.
 - **Detection strength** below about 7 sigma is not a detection.
 - The fitted **duration comes out short**, because a real transit has sloped
   sides and a box does not.
-- The **radius assumes a central crossing and no limb darkening**. Both make the
-  real planet bigger than the depth alone suggests.
+- **b and a/Rstar trade against each other.** The fit separates them only by the
+  shape of the shoulders, so those two are the least trustworthy numbers it
+  gives you.
+- **Limb darkening is yours to set.** u1 and u2 depend on the star and the
+  wavelength. Wrong coefficients bias the radius.
 
 ## A real stellar disc
 
